@@ -1,0 +1,9 @@
+# Para el CubeSAT (PlatformIO/STM32)
+# platformio.ini
+[env:stm32]
+lib_deps = 
+    libsodium
+    # Alternativa: wolfSSL
+
+# Para la estación terrestre (Linux)
+sudo apt-get install libsodium-dev libssl-dev
