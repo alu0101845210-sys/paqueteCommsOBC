@@ -1,0 +1,145 @@
+#include "crypto_common.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define BUFFER_SIZE 1024
+#define PORT 9999
+
+// Estado del receptor para anti-replay
+static uint32_t last_seen_counter = 0xFFFFFFFF;
+
+// Descifrar y verificar telemetría
+// Input:  packet - paquete recibido [counter:4][ciphertext+tag]
+//         packet_len - longitud del paquete
+// Output: plaintext - datos descifrados (debe tener memoria asignada)
+// Return: 1 éxito, 0 error
+int decrypt_telemetry(const uint8_t* packet, size_t packet_len,
+                      uint8_t* plaintext, size_t* plaintext_len,
+                      const uint8_t* key) {
+    uint32_t counter;
+    uint8_t nonce[NONCE_SIZE];
+    int result;
+    
+    // Verificar tamaño mínimo
+    if (packet_len < COUNTER_SIZE + TAG_SIZE) {
+        fprintf(stderr, "Paquete demasiado corto\n");
+        return 0;
+    }
+    
+    // Extraer contador
+    memcpy(&counter, packet, COUNTER_SIZE);
+    
+    // Anti-replay: rechazar paquetes antiguos o repetidos
+    if (counter <= last_seen_counter) {
+        fprintf(stderr, " Ataque de replay detectado! "
+                "Contador %u <= %u\n", counter, last_seen_counter);
+        return 0;
+    }
+    
+    // Reconstruir nonce
+    memset(nonce, 0, NONCE_SIZE);
+    memcpy(nonce, &counter, COUNTER_SIZE);
+    
+    // Descifrar y verificar
+    result = crypto_aead_chacha20poly1305_decrypt(
+        plaintext,                      // plaintext
+        plaintext_len,                  // longitud plaintext
+        NULL,                           // secret nonce (NULL = público)
+        packet + COUNTER_SIZE,          // ciphertext
+        packet_len - COUNTER_SIZE - TAG_SIZE,  // longitud ciphertext
+        NULL, 0,                        // AAD
+        packet + packet_len - TAG_SIZE, // tag
+        nonce,                          // nonce
+        key                             // clave
+    );
+    
+    if (result == 0) {
+        last_seen_counter = counter;
+        return 1; // Éxito
+    }
+    
+    fprintf(stderr, " Fallo de autenticación MAC\n");
+    return 0; // Error
+}
+
+// Servidor UDP para recibir datos del CubeSAT
+int start_ground_station(const uint8_t* key) {
+    int sockfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    uint8_t buffer[BUFFER_SIZE];
+    uint8_t plaintext[BUFFER_SIZE];
+    size_t plaintext_len;
+    
+    // Crear socket UDP
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        return -1;
+    }
+    
+    // Configurar dirección
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+    
+    // Bind
+    if (bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed");
+        close(sockfd);
+        return -1;
+    }
+    
+    printf(" Estación Terrestre iniciada en puerto %d\n", PORT);
+    printf("Esperando datos del CubeSAT...\n\n");
+    
+    // Bucle principal
+    while (1) {
+        ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0,
+                             (struct sockaddr*)&client_addr, &addr_len);
+        
+        if (n > 0) {
+            printf(" Paquete recibido: %zd bytes\n", n);
+            
+            if (decrypt_telemetry(buffer, n, plaintext, &plaintext_len, key)) {
+                printf(" Telemetría descifrada: %.*s\n\n", 
+                       (int)plaintext_len, plaintext);
+            } else {
+                printf(" Paquete rechazado (corrupto o replay)\n\n");
+            }
+        }
+    }
+    
+    close(sockfd);
+    return 0;
+}
+
+// Main
+int main(int argc, char* argv[]) {
+    uint8_t key[KEY_SIZE];
+    
+    // Inicializar libsodium
+    crypto_init();
+    
+    // Cargar clave precompartida
+    FILE* keyfile = fopen("satellite.key", "rb");
+    if (keyfile) {
+        fread(key, 1, KEY_SIZE, keyfile);
+        fclose(keyfile);
+        printf(" Clave cargada\n");
+    } else {
+        // Generar nueva clave (solo para pruebas)
+        randombytes_buf(key, KEY_SIZE);
+        printf(" Clave generada aleatoriamente\n");
+    }
+    
+    // Iniciar estación terrestre
+    start_ground_station(key);
+    
+    return 0;
+}
