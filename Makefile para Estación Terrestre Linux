@@ -1,0 +1,19 @@
+CC = gcc
+CFLAGS = -Wall -O2 -I/usr/local/include
+LDFLAGS = -L/usr/local/lib -lsodium -lm
+
+TARGET = ground_station
+SRCS = ground_station.c
+
+all: $(TARGET)
+
+$(TARGET): $(SRCS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRCS) $(LDFLAGS)
+
+clean:
+	rm -f $(TARGET)
+
+install_deps:
+	sudo apt-get install libsodium-dev
+
+.PHONY: all clean install_deps
