@@ -1,0 +1,14 @@
+# Instalar dependencias (Ubuntu/Debian)
+sudo apt-get install libsodium-dev
+
+# Compilar estación terrestre
+make
+
+# Generar clave compartida (32 bytes)
+dd if=/dev/urandom of=satellite.key bs=1 count=32
+
+# Ejecutar estación terrestre
+./ground_station
+
+# Para CubeSAT (STM32 con PlatformIO)
+# platformio run --target upload
