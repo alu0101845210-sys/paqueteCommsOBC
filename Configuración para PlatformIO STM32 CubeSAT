@@ -1,0 +1,9 @@
+[env:bluepill_f103c8]
+platform = ststm32
+board = bluepill_f103c8
+framework = stm32cube
+lib_deps = 
+    libsodium
+build_flags = 
+    -DSTM32F1
+    -D__SIZE_TYPE__=unsigned int
